@@ -1,0 +1,10 @@
+.vscode/
+env/
+.DS_Store
+*.env
+*jsonl
+*.json
+*.csv
+*.cfg
+*.npy
+*.png
