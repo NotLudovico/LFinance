@@ -92,7 +92,6 @@ def process_company(company, page, writer):
     if page.title() == "Aida - Home":
         logging.warning(f"{company_name_bold} not found. Skipping...")
         writer.write(company)
-        writer.flush()
         return
 
     # Check if company is publicly traded
@@ -113,7 +112,6 @@ def process_company(company, page, writer):
         else:
             logging.info(f"{company_name_bold} is not publicly traded. Skipping...")
             writer.write(company)
-            writer.flush()
             return
 
     # Navigate to financial details
@@ -128,6 +126,34 @@ def process_company(company, page, writer):
         logging.warning(
             f"⚠️ No financial data found for {company_name_bold}, skipping write."
         )
+
+
+def find_row_index(page, table_selector, target_text):
+    """
+    Searches for the first table row that contains the target text.
+
+    Args:
+        page: The Playwright page object.
+        table_selector: The CSS or XPath selector for table rows (e.g., "table tr" or "//table/tbody/tr").
+        target_text: The string to search for in the table rows.
+
+    Returns:
+        The index (0-based) of the first row containing the target text, or None if not found.
+    """
+    # Get all rows matching the selector
+    rows = page.locator(table_selector)
+    print(rows.inner_html())
+    count = rows.count()
+
+    # Convert target_text to lowercase for case-insensitive search
+    target_text = target_text.lower()
+
+    for i in range(count):
+        # Retrieve and convert row text to lowercase
+        row_text = rows.nth(i).inner_text().lower()
+        if target_text in row_text:
+            return i
+    return None
 
 
 # Extract financial data
@@ -153,11 +179,19 @@ def extract_financial_data(company, page):
 
     # Financial data categories
     categories = [
+        (4, "revenues", multiplier),
         (5, "ebitda", multiplier),
+        (6, "profit", multiplier),
+        (7, "assets", multiplier),
         (8, "sh_funds", multiplier),
         (9, "net_fin", multiplier),
         (11, "ebitda_sales", 1),
+        (12, "ros", 1),
+        (13, "roa", 1),
+        (14, "roe", 1),
+        (15, "debt_equity", 1),
         (17, "debt_ebitda", 1),
+        (20, "employees", 1),
     ]
 
     for row, key, factor in categories:
@@ -177,6 +211,33 @@ def extract_financial_data(company, page):
         if value not in ["n.a.", "n.s.", "n.d"]:
             value = into_num(value) * multiplier
         company.setdefault("tang_assets", []).append(value)
+
+    # Shareholders funds / total liabilities
+    for item in page.locator(
+        "//*[@id='m_ContentControl_ContentContainer1_ctl00_Content_Section_RATIOS_SSCtr']/tbody/tr[18]/td[@class='ft WHR WVT']"
+    ).all():
+        value = item.inner_text()
+        if value not in ["n.a.", "n.s.", "n.d"]:
+            value = into_num(value) * multiplier
+        company.setdefault("shf_liabilities", []).append(value)
+
+    # Working capital
+    for item in page.locator(
+        "//*[@id='m_ContentControl_ContentContainer1_ctl00_Content_Section_RATIOS_SSCtr']/tbody/tr[54]/td[@class='ft WHR WVT']"
+    ).all():
+        value = item.inner_text()
+        if value not in ["n.a.", "n.s.", "n.d"]:
+            value = into_num(value) * multiplier
+        company.setdefault("working_capital", []).append(value)
+
+    # Retained earnings
+    for item in page.locator(
+        "//*[@id='m_ContentControl_ContentContainer1_ctl00_Content_Section_BALANCESHEET_DET_SSCtr']/tbody/tr[124]/td[@class='ft WHR WVT']"
+    ).all():
+        value = item.inner_text()
+        if value not in ["n.a.", "n.s.", "n.d"]:
+            value = into_num(value) * multiplier
+        company.setdefault("retained_earnings", []).append(value)
 
 
 # Main function
@@ -200,7 +261,6 @@ def main():
                         continue
 
                     process_company(company, page, writer)
-
         browser.close()
         logging.info("Finished processing all companies.")
 
