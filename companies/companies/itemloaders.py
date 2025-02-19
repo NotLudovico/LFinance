@@ -8,7 +8,10 @@ def process_percentage(percentage) -> float:
 
 
 def extract_title(title) -> str:
-    return re.search(r"<title>(.*?) Stock Real Time Quotes |", title).group(1)
+    cleaned = re.search(r"<title>(.*?) Stock Real Time Quotes |", title).group(1)
+    if cleaned == "Bolognafiere":
+        cleaned = "Bologna Fiere"
+    return cleaned
 
 
 def build_weekly(data):

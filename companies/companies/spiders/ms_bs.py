@@ -31,21 +31,21 @@ class MsBsSpider(CrawlSpider):
     def start_requests(self):
         url_list = []
         # Get Security ID's from MS
-        response = requests.request(
-            "GET",
-            "https://tools.morningstar.co.uk/api/rest.svc/klr5zyak8x/security/screener",
-            data="",
-            headers={},
-            params={
-                "page": "1",
-                "pageSize": "1000",
-                "sortOrder": "Name asc",
-                "outputType": "json",
-                "universeIds": "E0EXG$XMIL",
-                "securityDataPoints": "SecId|Ticker",
-            },
-        )
-        self.sec_ids = json.loads(response.text)["rows"]
+        # response = requests.request(
+        #     "GET",
+        #     "https://tools.morningstar.co.uk/api/rest.svc/klr5zyak8x/security/screener",
+        #     data="",
+        #     headers={},
+        #     params={
+        #         "page": "1",
+        #         "pageSize": "1000",
+        #         "sortOrder": "Name asc",
+        #         "outputType": "json",
+        #         "universeIds": "E0EXG$XMIL",
+        #         "securityDataPoints": "SecId|Ticker",
+        #     },
+        # )
+        # self.sec_ids = json.loads(response.text)["rows"]
 
         for i in range(1, 46):
             url_list.append(
@@ -54,20 +54,19 @@ class MsBsSpider(CrawlSpider):
                 )
             )
 
-        for company in self.sec_ids:
-            url_list.append(
-                Request(
-                    f"https://tools.morningstar.it/it/stockreport/default.aspx?Site=it&id={company["SecId"]}&LanguageId=it-IT&SecurityToken={company["SecId"]}"
-                    + "]3]0]E0EXG%24XMIL",
-                    callback=self.parse_ms,
-                )
-            )
+        # for company in self.sec_ids:
+        #     url_list.append(
+        #         Request(
+        #             f"https://tools.morningstar.it/it/stockreport/default.aspx?Site=it&id={company["SecId"]}&LanguageId=it-IT&SecurityToken={company["SecId"]}"
+        #             + "]3]0]E0EXG%24XMIL",
+        #             callback=self.parse_ms,
+        #         )
+        #     )
         return url_list
 
     def parse_detail(self, response):
         company = CompanyLoader(item=Company(), selector=response)
         company.add_xpath("name", "//title")
-
         els = response.xpath(
             "(//table[contains(@class, '-clear-mtop') and not(contains(@class, '-indice'))])[2]/tr//span[contains(@class, '-right')]/text()"
         ).getall()
