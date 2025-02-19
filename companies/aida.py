@@ -19,7 +19,7 @@ CONFIG = {
     "DETAIL_PAGE_URL": "https://aida-r1.bvdinfo.com/Report.serv?product=aidaneo&RecordInternalId={}",
     "USERNAME": os.getenv("AIDA_USERNAME"),
     "PASSWORD": os.getenv("AIDA_PASSWORD"),
-    "HEADLESS": False,
+    "HEADLESS": True,
 }
 
 
@@ -164,6 +164,32 @@ def extract_financial_data(company, page):
                 if value not in ["n.a.", "n.s.", "n.d.", "nd"]:
                     value = into_num(value) * factor
                 company.setdefault(key, []).append(value)
+
+        # Shareholders funds / total liabilities
+        for item in page.locator(
+            "//*[@id='m_ContentControl_ContentContainer1_ctl00_Content_Section_RATIOS_SSCtr']/tbody/tr[18]/td[@class='ft WHR WVT']"
+        ).all():
+            value = item.inner_text()
+            if value not in ["n.a.", "n.s.", "n.d"]:
+                value = into_num(value) * multiplier
+            company.setdefault("shf_liabilities", []).append(value)
+        # Working capital
+        for item in page.locator(
+            "//*[@id='m_ContentControl_ContentContainer1_ctl00_Content_Section_RATIOS_SSCtr']/tbody/tr[54]/td[@class='ft WHR WVT']"
+        ).all():
+            value = item.inner_text()
+            if value not in ["n.a.", "n.s.", "n.d"]:
+                value = into_num(value) * multiplier
+            company.setdefault("working_capital", []).append(value)
+        # Retained earnings
+        for item in page.locator(
+            "//*[@id='m_ContentControl_ContentContainer1_ctl00_Content_Section_BALANCESHEET_DET_SSCtr']/tbody/tr[124]/td[@class='ft WHR WVT']"
+        ).all():
+            value = item.inner_text()
+            if value not in ["n.a.", "n.s.", "n.d"]:
+                value = into_num(value) * multiplier
+            company.setdefault("retained_earnings", []).append(value)
+
     except PlaywrightTimeoutError:
         logging.error(
             f"Timeout while navigating financial details for {company['name']}. Skipping..."
@@ -172,7 +198,7 @@ def extract_financial_data(company, page):
 
 
 def main():
-    prev_data = load_previous_data()
+    prev_data = load_previous_data("final.jsonl")
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=CONFIG["HEADLESS"])
         context = browser.new_context(
@@ -181,8 +207,8 @@ def main():
         page = context.new_page()
         login(page)
 
-        with jsonlines.open("test_final_f.jsonl", "a") as writer:
-            with jsonlines.open("data_ms_bs.jsonl") as reader:
+        with jsonlines.open("final.jsonl", "a") as writer:
+            with jsonlines.open("companies.jsonl") as reader:
                 for company in reader:
                     if any(prev["isin"] == company["isin"] for prev in prev_data):
                         continue

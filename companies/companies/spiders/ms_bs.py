@@ -31,37 +31,37 @@ class MsBsSpider(CrawlSpider):
     def start_requests(self):
         url_list = []
         # Get Security ID's from MS
-        # response = requests.request(
-        #     "GET",
-        #     "https://tools.morningstar.co.uk/api/rest.svc/klr5zyak8x/security/screener",
-        #     data="",
-        #     headers={},
-        #     params={
-        #         "page": "1",
-        #         "pageSize": "1000",
-        #         "sortOrder": "Name asc",
-        #         "outputType": "json",
-        #         "universeIds": "E0EXG$XMIL",
-        #         "securityDataPoints": "SecId|Ticker",
-        #     },
-        # )
-        # self.sec_ids = json.loads(response.text)["rows"]
+        response = requests.request(
+            "GET",
+            "https://tools.morningstar.co.uk/api/rest.svc/klr5zyak8x/security/screener",
+            data="",
+            headers={},
+            params={
+                "page": "1",
+                "pageSize": "1000",
+                "sortOrder": "Name asc",
+                "outputType": "json",
+                "universeIds": "E0EXG$XMIL",
+                "securityDataPoints": "SecId|Ticker",
+            },
+        )
+        self.sec_ids = json.loads(response.text)["rows"]
 
-        for i in range(1, 46):
+        for i in range(1, 1):
             url_list.append(
                 Request(
                     f"https://www.borsaitaliana.it/borsa/azioni/listino-a-z.html?lang=en&page={i}"
                 )
             )
 
-        # for company in self.sec_ids:
-        #     url_list.append(
-        #         Request(
-        #             f"https://tools.morningstar.it/it/stockreport/default.aspx?Site=it&id={company["SecId"]}&LanguageId=it-IT&SecurityToken={company["SecId"]}"
-        #             + "]3]0]E0EXG%24XMIL",
-        #             callback=self.parse_ms,
-        #         )
-        #     )
+        for company in self.sec_ids:
+            url_list.append(
+                Request(
+                    f"https://tools.morningstar.it/it/stockreport/default.aspx?Site=it&id={company["SecId"]}&LanguageId=it-IT&SecurityToken={company["SecId"]}"
+                    + "]3]0]E0EXG%24XMIL",
+                    callback=self.parse_ms,
+                )
+            )
         return url_list
 
     def parse_detail(self, response):
@@ -81,12 +81,12 @@ class MsBsSpider(CrawlSpider):
         company.add_value("ticker", els[4])
         assert len(company.get_collected_values("ticker")[0]) < 7
 
-        company.add_value(
-            "weekly_prices",
-            json.loads(
-                self.get_weekly_prices(company.get_collected_values("ticker")[0])
-            )["d"],
-        )
+        # company.add_value(
+        #     "weekly_prices",
+        #     json.loads(
+        #         self.get_weekly_prices(company.get_collected_values("ticker")[0])
+        #     )["d"],
+        # )
 
         yield company.load_item()
 
@@ -129,12 +129,12 @@ class MsBsSpider(CrawlSpider):
         company.add_value("ticker", els[4])
         assert len(company.get_collected_values("ticker")[0]) < 7
 
-        company.add_value(
-            "weekly_prices",
-            json.loads(
-                self.get_weekly_prices(company.get_collected_values("ticker")[0])
-            )["d"],
-        )
+        # company.add_value(
+        #     "weekly_prices",
+        #     json.loads(
+        #         self.get_weekly_prices(company.get_collected_values("ticker")[0])
+        #     )["d"],
+        # )
 
         yield company.load_item()
 

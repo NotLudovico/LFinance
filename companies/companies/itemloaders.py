@@ -8,10 +8,7 @@ def process_percentage(percentage) -> float:
 
 
 def extract_title(title) -> str:
-    cleaned = re.search(r"<title>(.*?) Stock Real Time Quotes |", title).group(1)
-    if cleaned == "Bolognafiere":
-        cleaned = "Bologna Fiere"
-    return cleaned
+    return re.search(r"<title>(.*?) Stock Real Time Quotes |", title).group(1)
 
 
 def build_weekly(data):
@@ -29,10 +26,10 @@ def convert_number_with_unit(number_str):
     multiplier = 1
     number_part = ""
     if re.search(r"Mil", number_str):
-        multiplier = 1000000
+        multiplier = 1_000_000
         number_part = number_str.split("M")[0]
     elif re.search(r"Bil", number_str):
-        multiplier = 1000000000
+        multiplier = 1_000_000_000
         number_part = number_str.split("B")[0]
 
     # Convert the numerical part to an integer and multiply by the multiplier
