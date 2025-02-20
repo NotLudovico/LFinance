@@ -8,3 +8,4 @@ env/
 *.cfg
 *.npy
 *.png
+*.xlsx

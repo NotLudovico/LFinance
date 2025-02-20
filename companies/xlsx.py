@@ -1,153 +1,82 @@
-import jsonlines
 import json
-import xlsxwriter
+import pandas as pd
 
-workbook = xlsxwriter.Workbook("dati.xlsx")
-worksheet = workbook.add_worksheet()
+# Input and output file names
+input_file = "companies.jsonl"
+output_file = "data.xlsx"
 
+records = []
 
-titles = [
-    ("name", 1, "Name"),
-    ("isin", 1, "Isin"),
-    ("ticker", 1, "Ticker"),
-    ("P/E", 1, "P/E"),
-    ("yield", 1, "Yield (%)"),
-    ("super_sector", 1, "Sector"),
-    ("maket_cap", 1, "Market Cap."),
-    ("1MP", 1, "1M (%)"),
-    ("6MP", 1, "6M (%)"),
-    ("1YP", 1, "1Y (%)"),
-    ("sh_funds", 6, "Shareholder's Funds", "#85c7f2"),
-    ("net_fin", 6, "Net Financial Position", "#a9e5bb"),
-    ("ebitda", 6, "EBITDA", "#faf884"),
-    ("ebitda_sales", 6, "EBITDA/sales (%)", "#ebcfb2"),
-    ("debt_ebitda", 6, "Debt/EBITDA", "#ce84ad"),
-    ("tang_assets", 6, "Total Tangible Assets", "#28536b"),
-]
+# Read and process each JSON record
+with open(input_file, "r", encoding="utf-8") as f:
+    for line in f:
+        record = json.loads(line)
+        processed_record = {}
+        # For each key, if the value is a list, take the first element; otherwise, keep it as is.
+        for key, value in record.items():
+            if isinstance(value, list):
+                processed_record[key] = value[0] if value else None
+            else:
+                processed_record[key] = value
+        records.append(processed_record)
 
-i = 0
+# Create a DataFrame from the processed records
+df = pd.DataFrame(records)
 
-for title in titles:
-    if title[1] == 1:
-        worksheet.write(
-            0,
-            i,
-            title[2],
-            workbook.add_format(
-                {
-                    "bold": 1,
-                    "align": "center",
-                    "right": 1,
-                }
-            ),
-        )
-    else:
-        worksheet.merge_range(
-            0,
-            i,
-            0,
-            i + title[1] - 1,
-            title[2],
-            workbook.add_format(
-                {"bold": 1, "align": "center", "right": 1, "fg_color": title[3]}
-            ),
-        )
-        i += title[1] - 1
-    i += 1
+# Write DataFrame to Excel using XlsxWriter with nan_inf_to_errors enabled.
+# Note: The 'engine_kwargs' parameter passes options to the underlying Workbook.
+writer = pd.ExcelWriter(
+    output_file,
+    engine="xlsxwriter",
+    engine_kwargs={"options": {"nan_inf_to_errors": True}},
+)
+df.to_excel(writer, index=False, sheet_name="Sheet1")
 
+# Access the workbook and worksheet objects
+workbook = writer.book
+worksheet = writer.sheets["Sheet1"]
 
-worksheet.freeze_panes(1, 1)
+# Define formats
 
-# Pull in data
-with jsonlines.open("final.jsonl") as data:
-    row = 1
-    bg_format1 = workbook.add_format(
-        {"bg_color": "#78B0DE"}
-    )  # blue cell background color
-    bg_format2 = workbook.add_format(
-        {"bg_color": "#FFFFFF"}
-    )  # white cell background color
+# Header format: bold, centered, with a light background and thicker borders.
+header_format = workbook.add_format(
+    {
+        "bold": True,
+        "text_wrap": True,
+        "align": "center",
+        "valign": "vcenter",
+        "border": 2,
+        "bg_color": "#D7E4BC",  # light green
+        "font_size": 12,
+    }
+)
 
-    for company in data:
-        cf = workbook.add_format({})
-        cf.set_bg_color("#b5d1ff") if row % 2 == 0 else cf.set_bg_color("#ffffff")
-        cf.set_right(1)
+# Format for odd data rows: white background with thick borders.
+format_odd = workbook.add_format({"border": 2, "bg_color": "#FFFFFF"})
 
-        i = 0
-        for title in titles:
-            if title[1] == 1:
-                worksheet.write(
-                    row,
-                    i,
-                    company[title[0]] if title[0] in company else "",
-                    workbook.add_format(
-                        {
-                            "bg_color": "#b5d1ff" if row % 2 == 0 else "#ffffff",
-                            "right": 1,
-                            "font_color": (
-                                "#000000"
-                                if (
-                                    (
-                                        title[0] != "1MP"
-                                        and title[0] != "6MP"
-                                        and title[0] != "1YP"
-                                    )
-                                    or (title[0] not in company)
-                                )
-                                else "FF0000" if company[title[0]] < 0 else "00B050"
-                            ),
-                        }
-                    ),
-                )
-                i += 1
-            elif title[0] in company:
-                for j in range(0, min(6, len(company[title[0]]))):
-                    worksheet.write(
-                        row,
-                        i,
-                        company[title[0]][j] if title[0] in company else "",
-                        (
-                            cf
-                            if j == 5
-                            else (
-                                workbook.add_format(
-                                    {
-                                        "bg_color": (
-                                            "#b5d1ff" if row % 2 == 0 else "#ffffff"
-                                        )
-                                    }
-                                )
-                            )
-                        ),
-                    )
-                    i += 1
-                for index in range(j + 1, 6):
-                    if index == 5:
-                        worksheet.write(row, i, "", cf)
-                    else:
-                        worksheet.write(
-                            row,
-                            i,
-                            "",
-                            workbook.add_format(
-                                {"bg_color": ("#b5d1ff" if row % 2 == 0 else "#ffffff")}
-                            ),
-                        )
-                    i += 1
+# Format for even data rows: light gray background with thick borders.
+format_even = workbook.add_format({"border": 2, "bg_color": "#F0F0F0"})
 
-        for index in range(i, 46):
-            worksheet.write(
-                row,
-                index,
-                "",
-                workbook.add_format(
-                    {
-                        "bg_color": ("#b5d1ff" if row % 2 == 0 else "#ffffff"),
-                        "right": 1 if index - 9 != 0 and (index - 9) % 6 == 0 else 0,
-                    }
-                ),
-            )
-        row += 1
+# --- Apply the header format ---
+for col_num, col_name in enumerate(df.columns.values):
+    worksheet.write(0, col_num, col_name, header_format)
 
+# --- Apply alternating row formats to the data rows ---
+# Data rows start at Excel row 1 (since row 0 is the header).
+for row_num in range(1, len(df) + 1):
+    # Alternate formats: first data row white, second gray, etc.
+    row_format = format_odd if (row_num % 2 == 1) else format_even
+    for col_num in range(len(df.columns)):
+        cell_value = df.iloc[row_num - 1, col_num]
+        worksheet.write(row_num, col_num, cell_value, row_format)
 
-workbook.close()
+# Optionally, adjust column widths based on the maximum length of data in each column.
+for i, col in enumerate(df.columns):
+    # Find the maximum length among all values in the column and the header.
+    max_length = max(df[col].astype(str).map(len).max(), len(str(col)))
+    worksheet.set_column(i, i, max_length + 2)
+
+# Save and close the Excel file.
+writer.close()
+
+print(f"Data successfully exported to {output_file}")
