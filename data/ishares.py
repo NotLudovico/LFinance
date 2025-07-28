@@ -4,11 +4,16 @@ import re
 import sqlite3
 from typing import Any, Coroutine, Dict, List
 
+from utilities.country import country_to_iso3
+from utilities.translate import translate
+
+from datetime import datetime
+import locale
 import aiohttp
 from tqdm import tqdm  # Optional: for a nice progress bar
 
 # --- Configuration ---
-DB_NAME = "database_gemini.db"
+DB_NAME = "database.db"
 CONCURRENT_REQUESTS = 10  # Limit the number of concurrent requests
 
 # --- Constants & Helpers ---
@@ -21,7 +26,11 @@ PROFITS_CONV = {
 
 def clean_product(prod: Dict[str, Any]) -> Dict[str, Any]:
     """Cleans the raw product data from the initial JSON list."""
-    # This function remains unchanged
+    locale.setlocale(locale.LC_TIME, "it_IT.UTF-8")
+    date_str = prod["inceptionDate"]["d"]
+    parsed_date = datetime.strptime(date_str, "%d %b %Y")
+    formatted_date = parsed_date.strftime("%d/%m/%Y")
+
     return {
         "product_type": prod["productView"][
             1
@@ -32,13 +41,13 @@ def clean_product(prod: Dict[str, Any]) -> Dict[str, Any]:
         "isin": prod["isin"],
         "ticker": prod["localExchangeTicker"],
         "nav": prod["navAmount"]["r"],
-        "asset_class": prod["aladdinAssetClass"],
-        "sub_asset_class": prod["aladdinSubAssetClass"],
-        "market_type": prod["aladdinMarketType"],
-        "region": prod["aladdinRegion"],
+        "asset_class": translate(prod["aladdinAssetClass"]),
+        "sub_asset_class": translate(prod["aladdinSubAssetClass"]),
+        "market_type": translate(prod["aladdinMarketType"]),
+        "region": translate(prod["aladdinRegion"]),
         "url": prod["productPageUrl"],
-        "domicile": prod["domicile"],
-        "inception_date": prod["inceptionDate"]["d"],
+        "domicile": country_to_iso3(prod["domicile"]),
+        "inception_date": formatted_date,
         "use_of_profits": PROFITS_CONV.get(prod["useOfProfits"]),
         "size": prod["totalNetAssets"]["r"],
         "currency": prod["seriesBaseCurrencyCode"],
@@ -46,45 +55,84 @@ def clean_product(prod: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def parse_ishares_holding(holding_data: list) -> Dict[str, Any]:
+def parse_ishares_holding(data: list) -> dict:
     """
-    Parses a holding list for core information.
-    This function remains unchanged.
+    Parses an inconsistent list from iShares to extract key financial data.
+
+    This function identifies data points based on their intrinsic patterns (e.g., ISIN format)
+    and their position relative to other known elements (e.g., a sector is found just
+    before the asset class).
+
+    Args:
+        data: A list containing the raw holding information.
+
+    Returns:
+        A dictionary containing the parsed data for the fields of interest.
     """
-    parsed = {}
-    strings = [item for item in holding_data if isinstance(item, str)]
-    dicts = [item for item in holding_data if isinstance(item, dict)]
+    result = {
+        "country": None,
+        "sector": None,
+        "asset_class": None,
+        "name": None,
+        "weight": None,
+        "isin": None,
+        "currency": None,
+    }
 
-    percent_dicts = [d for d in dicts if "%" in d.get("display", "")]
-    if percent_dicts:
-        percent_dicts.sort(
-            key=lambda d: len(str(d.get("raw", "")).split(".")[-1]), reverse=True
-        )
-        parsed["weight"] = percent_dicts[0].get("raw")
+    # --- Extracts Name ---
+    if len(data) > 1 and isinstance(data[1], str):
+        result["name"] = data[1]
 
-    isin_regex = re.compile(r"^[A-Z]{2}[A-Z0-9]{9}\d$")
-    for s in strings:
-        if isin_regex.match(s):
-            parsed["isin"] = s
-            strings.remove(s)
-            break
+    # --- Use markers to identify key indices first ---
+    isin_index = -1
+    asset_class_index = -1
 
-    if strings and len(strings[-1]) == 3 and strings[-1].isupper():
-        parsed["currency"] = strings.pop(-1)
+    for i, item in enumerate(data):
+        if isinstance(item, str):
+            # Find ISIN using its unique 12-character format
+            if re.match(r"^[A-Z]{2}[A-Z0-9]{10}$", item):
+                isin_index = i
+            # Find the asset class by its specific name
+            elif item in ["Azionario", "Obbligazionario"]:
+                asset_class_index = i
 
-    if len(strings) > 1:
-        # The first element is often the exchange, which can be '-'
-        exchange = strings.pop(-1)
-        if exchange != "-":
-            parsed["exchange"] = exchange
-        parsed["country"] = strings.pop(-1)
+    # --- Extract data based on patterns and markers ---
 
-    if len(strings) > 0:
-        parsed["ticker"] = strings[0]
-    if len(strings) > 1:
-        parsed["name"] = strings[1]
+    # ISIN: Identified by its index
+    if isin_index != -1:
+        result["isin"] = data[isin_index]
 
-    return parsed
+    # Asset Class and Sector: Sector is the string just before the asset class
+    if asset_class_index != -1:
+        result["asset_class"] = data[asset_class_index]
+        if asset_class_index > 0 and isinstance(data[asset_class_index - 1], str):
+            result["sector"] = data[asset_class_index - 1]
+
+    # Country: The first string that appears after the ISIN
+    if isin_index != -1:
+        for item in data[isin_index + 1 :]:
+            if isinstance(item, str) and item != "-":
+                result["country"] = item
+                break
+
+    # Weight and Currency: Find by iterating through the list
+    found_weight = False
+    for item in data:
+        # Weight is the 'raw' value of the first dictionary containing '%'
+        if (
+            not found_weight
+            and isinstance(item, dict)
+            and "display" in item
+            and "%" in str(item.get("display"))
+        ):
+            result["weight"] = item.get("raw")
+            found_weight = True
+
+        # Currency is a 3-letter uppercase string (will capture the last one found)
+        elif isinstance(item, str) and re.match(r"^[A-Z]{3}$", item):
+            result["currency"] = item
+
+    return result
 
 
 def setup_database(conn: sqlite3.Connection):
@@ -107,7 +155,7 @@ def setup_database(conn: sqlite3.Connection):
         """
         CREATE TABLE etf_holdings (
             id INTEGER PRIMARY KEY AUTOINCREMENT, etf_isin TEXT, holding_isin TEXT,
-            holding_name TEXT, weight REAL, country TEXT, currency TEXT
+            holding_name TEXT, weight REAL, sector TEXT, country TEXT, currency TEXT
         )
         """
     )
@@ -205,7 +253,8 @@ async def main():
                         h.get("isin"),
                         h.get("name"),
                         h.get("weight"),
-                        h.get("country"),
+                        h.get("sector"),
+                        country_to_iso3(h.get("country")),
                         h.get("currency"),
                     )
                 )
@@ -226,7 +275,7 @@ async def main():
 
     # Batch insert holdings
     cursor.executemany(
-        "INSERT INTO etf_holdings (etf_isin, holding_isin, holding_name, weight, country, currency) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO etf_holdings (etf_isin, holding_isin, holding_name, weight, sector, country, currency) VALUES (?, ?, ?, ?, ?, ?, ?)",
         all_holdings_to_insert,
     )
 
