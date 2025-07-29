@@ -6,6 +6,7 @@ from typing import Any, Coroutine, Dict, List
 
 from utilities.country import country_to_iso3
 from utilities.translate import translate
+from utilities.database import setup_database
 
 from datetime import datetime
 import locale
@@ -18,8 +19,8 @@ CONCURRENT_REQUESTS = 10  # Limit the number of concurrent requests
 
 # --- Constants & Helpers ---
 PROFITS_CONV = {
-    "Ad Accumulazione": "ACC",
-    "Distribuzione": "DIST",
+    "Ad Accumulazione": "acc",
+    "Distribuzione": "dist",
     "Nessun rendimento": None,
 }
 
@@ -32,9 +33,6 @@ def clean_product(prod: Dict[str, Any]) -> Dict[str, Any]:
     formatted_date = parsed_date.strftime("%d/%m/%Y")
 
     return {
-        "product_type": prod["productView"][
-            1
-        ],  # First element seems to be always "all"
         "issuer": "ishares",
         "pid": prod["portfolioId"],
         "name": prod["fundName"],
@@ -43,12 +41,13 @@ def clean_product(prod: Dict[str, Any]) -> Dict[str, Any]:
         "nav": prod["navAmount"]["r"],
         "asset_class": translate(prod["aladdinAssetClass"]),
         "sub_asset_class": translate(prod["aladdinSubAssetClass"]),
-        "market_type": translate(prod["aladdinMarketType"]),
+        # "market_type": translate(prod["aladdinMarketType"]),
         "region": translate(prod["aladdinRegion"]),
         "url": prod["productPageUrl"],
         "domicile": country_to_iso3(prod["domicile"]),
         "inception_date": formatted_date,
         "use_of_profits": PROFITS_CONV.get(prod["useOfProfits"]),
+        "replication": None,
         "size": prod["totalNetAssets"]["r"],
         "currency": prod["seriesBaseCurrencyCode"],
         "ter": prod["ter_ocf"]["r"] if prod["ter_ocf"] != "-" else None,
@@ -82,6 +81,8 @@ def parse_ishares_holding(data: list) -> dict:
     # --- Extracts Name ---
     if len(data) > 1 and isinstance(data[1], str):
         result["name"] = data[1]
+        if "CASH " in result["name"] or " CASH" in result["name"]:
+            result["sector"] = "cash"
 
     # --- Use markers to identify key indices first ---
     isin_index = -1
@@ -135,33 +136,6 @@ def parse_ishares_holding(data: list) -> dict:
     return result
 
 
-def setup_database(conn: sqlite3.Connection):
-    """Sets up the database tables."""
-    cursor = conn.cursor()
-    cursor.execute("DROP TABLE IF EXISTS etfs")
-    cursor.execute("DROP TABLE IF EXISTS etf_holdings")
-    cursor.execute(
-        """
-        CREATE TABLE etfs (
-            isin TEXT PRIMARY KEY, product_type TEXT, issuer TEXT, name TEXT,
-            ticker TEXT, nav REAL, asset_class TEXT, sub_asset_class TEXT,
-            market_type TEXT, region TEXT, url TEXT, domicile TEXT,
-            inception_date TEXT, use_of_profits TEXT, size REAL,
-            currency TEXT, ter REAL
-        )
-        """
-    )
-    cursor.execute(
-        """
-        CREATE TABLE etf_holdings (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, etf_isin TEXT, holding_isin TEXT,
-            holding_name TEXT, weight REAL, sector TEXT, country TEXT, currency TEXT
-        )
-        """
-    )
-    conn.commit()
-
-
 async def get_products_list(session: aiohttp.ClientSession) -> List[Dict[str, Any]]:
     """Fetches the main list of all products asynchronously."""
     url = "https://www.ishares.com/it/investitore-privato/it/product-screener/product-screener-v3.1.jsn"
@@ -199,7 +173,10 @@ async def fetch_holding(
                 return {"product": prod, "holdings": holdings_data}
 
         except (aiohttp.ClientError, json.JSONDecodeError, asyncio.TimeoutError) as e:
-            print(f"Failed to fetch holdings for {prod['name']} ({prod['isin']}): {e}")
+            with open("./fetch_error.txt", "+a") as error_file:
+                error_file.write(
+                    f"Failed to fetch holdings for {prod['name']} ({prod['isin']}): {e}\n"
+                )
             return {"product": prod, "holdings": []}  # Return empty list on failure
 
 
@@ -253,7 +230,7 @@ async def main():
                         h.get("isin"),
                         h.get("name"),
                         h.get("weight"),
-                        h.get("sector"),
+                        translate(h.get("sector")),
                         country_to_iso3(h.get("country")),
                         h.get("currency"),
                     )
@@ -277,6 +254,11 @@ async def main():
     cursor.executemany(
         "INSERT INTO etf_holdings (etf_isin, holding_isin, holding_name, weight, sector, country, currency) VALUES (?, ?, ?, ?, ?, ?, ?)",
         all_holdings_to_insert,
+    )
+
+    # Fix Germany category for brazil etf
+    cursor.execute(
+        "UPDATE etf_holdings SET country = 'BRA' WHERE holding_isin = 'DE000A0Q4R85'"
     )
 
     conn.commit()

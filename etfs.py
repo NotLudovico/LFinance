@@ -4,7 +4,7 @@ __generated_with = "0.14.11"
 app = marimo.App(width="medium")
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _():
     import marimo as mo
     import json
@@ -12,15 +12,21 @@ def _():
     import polars as pl
     import matplotlib.pyplot as plt
     import plotly.express as px
-    from utilities.country import COUNTRY_TO_ISO3 
     from matplotlib.patches import Polygon
     from matplotlib.collections import PatchCollection
     from matplotlib.cm import get_cmap
     from matplotlib.colors import Normalize
+    from dataclasses import dataclass
 
 
     plt.style.use("default")
-    return COUNTRY_TO_ISO3, pl, px, sqlite3
+    return mo, pl, plt, px, sqlite3
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""# Portfolio""")
+    return
 
 
 @app.cell
@@ -34,25 +40,32 @@ def _():
     return (portfolio,)
 
 
-@app.cell
-def _(portfolio):
+@app.cell(hide_code=True)
+def _(mo, portfolio):
     total = sum([v for k, v in portfolio.items()])
     portfolio_pct = dict(
         zip(portfolio.keys(), map(lambda x: x / total, portfolio.values()))
     )
-    portfolio_pct
+
+    mo.vstack([mo.md(f"{k}: **{v*100:.2f}%**") for k,v in portfolio_pct.items()])
     return (portfolio_pct,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(sqlite3):
     # Attaching DB
     conn = sqlite3.connect("data/database.db")
     return (conn,)
 
 
-@app.cell
-def _(COUNTRY_TO_ISO3, conn, pl, portfolio_pct):
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""# All Holdings""")
+    return
+
+
+@app.cell(hide_code=True)
+def _(conn, pl, portfolio_pct):
     dfs = []
     for k, v in portfolio_pct.items():
         df = (
@@ -66,10 +79,6 @@ def _(COUNTRY_TO_ISO3, conn, pl, portfolio_pct):
             )
             .with_columns(
                 pl.col("weight") * v,
-                pl.col("country").str.to_lowercase(),
-            )
-            .with_columns(
-                pl.col("country").replace(COUNTRY_TO_ISO3),
             )
             .drop(pl.col("id"))
             .filter(pl.col("weight") > 0)
@@ -77,39 +86,81 @@ def _(COUNTRY_TO_ISO3, conn, pl, portfolio_pct):
         dfs.append(df)
 
 
-    complete_portfolio = pl.concat(dfs)
+    complete_portfolio = pl.concat(dfs).drop("etf_isin").sort(by="weight")
     complete_portfolio
     return (complete_portfolio,)
 
 
-@app.cell
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""# Geographical Exposure""")
+    return
+
+
+@app.cell(hide_code=True)
 def _(complete_portfolio, pl):
-    allocation = (
+    geo_allocation = (
         complete_portfolio.select(["country", "weight"])
         .group_by("country")
         .agg([pl.col("weight").sum()])
         .filter(pl.col("weight") >= 0)
-        .sort(pl.col("weight"))
+        .sort(pl.col("weight"), descending=True)
     )
-    allocation
-    return (allocation,)
+    geo_allocation
+    return (geo_allocation,)
 
 
-@app.cell
-def _(allocation, px):
-    labels = allocation["country"].to_list()
-    weights = allocation["weight"].to_list()
-
-    fig = px.choropleth(
-        allocation,
-        locations="country",            
-        color="weight",
-        color_continuous_scale="Blues",
-        projection="natural earth",
-        title="Distribuzione investimenti per Paese"
+@app.cell(hide_code=True)
+def _(geo_allocation, mo, px):
+    mo.ui.plotly(
+        px.choropleth(
+            geo_allocation,
+            locations="country",
+            color="weight",
+            color_continuous_scale=[
+                [0.0, "rgb(70, 130, 180)"],
+                [1.0, "rgb(220, 20, 60)"],
+            ],
+            projection="natural earth",
+            title="Distribuzione investimenti per Paese",
+        )
     )
-    fig.update_layout(margin=dict(l=0, r=0, t=30, b=0))
-    fig.show()
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""# Sector Exposure""")
+    return
+
+
+@app.cell(hide_code=True)
+def _(complete_portfolio, pl):
+    sector_allocation = (
+        complete_portfolio.select(["sector", "weight"])
+        .group_by("sector")
+        .agg([pl.col("weight").sum()])
+        .filter(pl.col("weight") >= 0)
+        .sort(pl.col("weight"), descending=True)
+        .filter(pl.col("sector").is_not_null())
+    )
+
+    sector_allocation
+    return (sector_allocation,)
+
+
+@app.cell(hide_code=True)
+def _(mo, plt, sector_allocation):
+    plt.figure(figsize=(6, 4))
+    plt.barh(
+        sector_allocation["sector"].to_list(),
+        sector_allocation["weight"].to_list(),
+    )
+    plt.title("Sector Exposure")
+    plt.grid(alpha=0.4)
+    plt.xlabel("Weight (%)")
+
+    mo.center(plt.gca())
     return
 
 
