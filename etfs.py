@@ -34,8 +34,8 @@ def _():
     portfolio = {
         "IE00B52MJY50": 5072,
         "IE00BMG6Z448": 15278,
-        "IE00B4L5Y983": 18430,
-        "LU0908500753": 19484,
+        "IE00B4L5Y983": 25430,
+        "LU0908500753": 29484,
     }
     return (portfolio,)
 
@@ -86,7 +86,7 @@ def _(conn, pl, portfolio_pct):
         dfs.append(df)
 
 
-    complete_portfolio = pl.concat(dfs).drop("etf_isin").sort(by="weight")
+    complete_portfolio = pl.concat(dfs).drop("etf_isin").sort(by="weight", descending=True)
     complete_portfolio
     return (complete_portfolio,)
 

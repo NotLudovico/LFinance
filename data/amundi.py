@@ -90,7 +90,7 @@ def process_holdings_data(holdings_products: list) -> list[tuple]:
         for holding in composition_data:
             chars = holding.get("compositionCharacteristics", {})
 
-            if "name" in chars:
+            if "name" in chars and chars["name"] is not None:
                 if "CASH " in chars["name"] or " CASH" in chars["name"]:
                     chars["sector"] = "cash"
 

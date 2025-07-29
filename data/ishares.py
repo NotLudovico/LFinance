@@ -180,6 +180,97 @@ async def fetch_holding(
             return {"product": prod, "holdings": []}  # Return empty list on failure
 
 
+def handle_nested_etfs(
+    holdings: List[tuple], nested_etf_isins: List[str]
+) -> List[tuple]:
+    """
+    Finds all occurrences of specified nested ETFs, unnests them, and rescales
+    the weights of their holdings for each parent ETF.
+
+    Args:
+        holdings: The list of all holdings tuples (etf_isin, holding_isin, ...).
+        nested_etf_isins: A list of ISINs for the ETFs to unroll.
+
+    Returns:
+        A corrected list of holdings.
+    """
+    if not nested_etf_isins:
+        return holdings
+
+    nested_set = set(nested_etf_isins)
+
+    # A holding tuple: (etf_isin, holding_isin, name, weight, sector, country, currency)
+    # The indexes are:   0         1             2     3       4       5        6
+
+    # 1. Find all parent relationships and map the holdings of nested ETFs
+    parent_relationships = []
+    holdings_by_nested_etf = {isin: [] for isin in nested_set}
+
+    for h in holdings:
+        etf_isin = h[0]
+        holding_isin = h[1]
+
+        # Check if this holding is one of the ETFs we need to unroll
+        if holding_isin in nested_set:
+            parent_relationships.append(
+                {
+                    "parent_isin": etf_isin,
+                    "nested_isin": holding_isin,
+                    "weight": h[3],  # weight in parent
+                }
+            )
+
+        # Check if this holding belongs to one of the nested ETFs
+        if etf_isin in nested_set:
+            holdings_by_nested_etf[etf_isin].append(h)
+
+    if not parent_relationships:
+        print("\nNo nested ETFs from the specified list were found as holdings.")
+        return holdings
+
+    # 2. Unroll the holdings for each relationship found
+    all_unrolled_holdings = []
+    for rel in parent_relationships:
+        parent_isin = rel["parent_isin"]
+        nested_isin = rel["nested_isin"]
+        weight_in_parent = rel["weight"]
+
+        underlying_holdings = holdings_by_nested_etf.get(nested_isin, [])
+
+        for h in underlying_holdings:
+            # new_weight = weight_in_nested * weight_of_nested_in_parent
+            new_weight = (
+                h[3] * weight_in_parent / 100 if h[3] and weight_in_parent else None
+            )
+
+            # Create a new holding tuple assigned to the correct parent ETF
+            unrolled_holding = (
+                parent_isin,  # The ultimate parent's ISIN
+                h[1],  # holding_isin
+                h[2],  # holding_name
+                new_weight,  # The newly calculated weight
+                h[4],  # sector
+                h[5],  # country
+                h[6],  # currency
+            )
+            all_unrolled_holdings.append(unrolled_holding)
+
+    # 3. Filter the original list to remove all traces of the nested ETFs
+    final_holdings = [
+        h for h in holdings if h[0] not in nested_set and h[1] not in nested_set
+    ]
+
+    # 4. Add the new, unrolled holdings to the final list
+    final_holdings.extend(all_unrolled_holdings)
+
+    print(
+        f"\nUnrolled {len(parent_relationships)} nested ETF instances. "
+        f"Added {len(all_unrolled_holdings)} rescaled holdings."
+    )
+
+    return final_holdings
+
+
 async def main():
     """Main asynchronous routine."""
     conn = sqlite3.connect(DB_NAME)
@@ -235,6 +326,10 @@ async def main():
                         h.get("currency"),
                     )
                 )
+    # Handling nested etf
+    print("\nUnrolling...")
+    ETFS_TO_UNROLL = ["DE000A0Q4R85"]
+    all_holdings_to_insert = handle_nested_etfs(all_holdings_to_insert, ETFS_TO_UNROLL)
 
     # --- Batch insert all collected data into the database ---
     print("\nInserting data into the database...")
@@ -254,11 +349,6 @@ async def main():
     cursor.executemany(
         "INSERT INTO etf_holdings (etf_isin, holding_isin, holding_name, weight, sector, country, currency) VALUES (?, ?, ?, ?, ?, ?, ?)",
         all_holdings_to_insert,
-    )
-
-    # Fix Germany category for brazil etf
-    cursor.execute(
-        "UPDATE etf_holdings SET country = 'BRA' WHERE holding_isin = 'DE000A0Q4R85'"
     )
 
     conn.commit()
