@@ -86,7 +86,19 @@ def _(conn, pl, portfolio_pct):
         dfs.append(df)
 
 
-    complete_portfolio = pl.concat(dfs).drop("etf_isin").sort(by="weight", descending=True)
+    complete_portfolio = (
+        pl.concat(dfs)
+        .drop("etf_isin")
+        .group_by("holding_isin")
+        .agg(
+            pl.first("holding_name").alias("holding_name"),
+            pl.sum("weight").alias("weight"),
+            pl.first("sector").alias("sector"),
+            pl.first("country").alias("country"),
+            pl.first("currency").alias("currency"),
+        )  
+        .sort(by="weight", descending=True)
+    )
     complete_portfolio
     return (complete_portfolio,)
 
@@ -97,7 +109,7 @@ def _(mo):
     return
 
 
-@app.cell(hide_code=True)
+@app.cell
 def _(complete_portfolio, pl):
     geo_allocation = (
         complete_portfolio.select(["country", "weight"])

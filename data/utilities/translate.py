@@ -12,10 +12,12 @@ ETF_PROPERTY_TRANSLATE = {
     "Materiali": "materials",
     "Imprese di servizi di pubblica utilità": "public utility companies",
     "Comunicazione": "communications",
+    "Communication services": "communications",
     "Industriali": "industrials",
     "Consumi discrezionali": "discretionary spending",
     "Generi di largo consumo": "consumer goods",
     "Salute": "health",
+    "Health care": "health",
     "Tesoro": "treasury",
     "Energia": "energy",
     "Immobili": "real estate",
@@ -36,6 +38,7 @@ ETF_PROPERTY_TRANSLATE = {
     "UCITS ETF USD Hedged Dist": "dist",
     "Direct(Physical)": "physical",
     "Indirect(Swap Based)": "swap",
+    "Campionatura stratificata": "stratified sampling",
 }
 
 
