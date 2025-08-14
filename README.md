@@ -28,7 +28,7 @@ LFinance is a small set of scrapers that collect **ETF facts and full holdings**
 ---
 
 ## Quick start
-Using [uv](https://github.com/astral-sh/uv) package manager:
+Using **[uv](https://github.com/astral-sh/uv)** **package manager**:
 **Install**
 ```bash
 # With uv (uses pyproject/uv.lock)
