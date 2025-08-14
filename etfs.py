@@ -36,6 +36,7 @@ def _():
         "IE00BMG6Z448": 15278,
         "IE00B4L5Y983": 25430,
         "LU0908500753": 29484,
+        "IE00BFY0GT14": 1000
     }
     return (portfolio,)
 

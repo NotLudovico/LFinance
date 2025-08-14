@@ -140,7 +140,9 @@ async def fetch_and_process_etf(session, semaphore, etf_details):
                 if "Currency Local" in holdings.columns:
                     holdings = holdings.rename({"Currency Local": "currency"})
                 else:
-                    holdings = holdings.rename({"Currency": "currency"})
+                    holdings = holdings.rename(
+                        {"Currency": "currency", "Trade Country Name": "country"}
+                    )
 
                 # Handle different column names for bond vs equity funds
                 if "Maturity Date" in holdings.columns:

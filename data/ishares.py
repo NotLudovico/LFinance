@@ -116,7 +116,7 @@ def parse_ishares_holding(data: list) -> dict:
                 result["country"] = item
                 break
 
-    # Weight and Currency: Find by iterating through the list
+    # Weight and Currency
     found_weight = False
     for item in data:
         # Weight is the 'raw' value of the first dictionary containing '%'
@@ -202,7 +202,7 @@ def handle_nested_etfs(
     # A holding tuple: (etf_isin, holding_isin, name, weight, sector, country, currency)
     # The indexes are:   0         1             2     3       4       5        6
 
-    # 1. Find all parent relationships and map the holdings of nested ETFs
+    # Find all parent relationships and map the holdings of nested ETFs
     parent_relationships = []
     holdings_by_nested_etf = {isin: [] for isin in nested_set}
 
@@ -228,7 +228,7 @@ def handle_nested_etfs(
         print("\nNo nested ETFs from the specified list were found as holdings.")
         return holdings
 
-    # 2. Unroll the holdings for each relationship found
+    # Unroll the holdings for each relationship found
     all_unrolled_holdings = []
     for rel in parent_relationships:
         parent_isin = rel["parent_isin"]
