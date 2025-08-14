@@ -1,46 +1,49 @@
-import json
 import asyncio
+import io
+import json
+import re
+from typing import Any, Dict, List
+
 import aiohttp
 import polars as pl
-import sqlite3
-import io
-import re
 import requests
-from typing import Any, Dict, List, Tuple
-
 from bs4 import BeautifulSoup
 from tqdm.asyncio import tqdm_asyncio
 
-# Assuming these utilities are in a 'utilities' directory
-from utilities.database import setup_database
-from utilities.country import country_to_iso3
-from utilities.translate import translate
+# DB utilities (normalized schema + helpers)
+from utilities.database import (
+    open_db,
+    setup_database,
+    upsert_etf,
+    upsert_security,
+    upsert_holding,
+)
+
+# Shared normalization models
+from utilities.common import ETF, Holding
+
 
 # --- Configuration ---
 DB_NAME = "database.db"
-CONCURRENT_REQUESTS = 10  # Limit the number of concurrent requests
+CONCURRENT_REQUESTS = 10  # Limit the number of concurrent HTTP requests
 
 
 def parse_amount(s: str) -> float:
     """
-    Convert strings like '€803,44 M' into a number (e.g. 803440000.0).
+    Convert strings like '€803,44 M' into a float number of units (e.g. 803_440_000.0).
     Supports suffixes: K (thousand), M (million), B (billion).
     """
-    # 1. Strip whitespace and currency symbols
     s = s.strip()
     s = re.sub(r"[€$£]", "", s)
 
-    # 2. Extract the multiplier suffix (if any)
     match = re.match(r"([\d.,]+)\s*([KMB])?", s, re.IGNORECASE)
     if not match:
         raise ValueError(f"Unrecognized format: {s}")
     number_str, suffix = match.groups()
 
-    # 3. Normalize decimal comma to point, remove thousands separators
     number_str = number_str.replace(".", "").replace(",", ".")
     value = float(number_str)
 
-    # 4. Apply suffix multiplier
     multipliers = {"K": 1e3, "M": 1e6, "B": 1e9}
     if suffix:
         value *= multipliers[suffix.upper()]
@@ -48,31 +51,34 @@ def parse_amount(s: str) -> float:
     return value
 
 
-# --- Helper Function to Process a Single ETF ---
-async def fetch_and_process_etf(session, semaphore, etf_details):
+async def fetch_and_process_etf(
+    session: aiohttp.ClientSession,
+    semaphore: asyncio.Semaphore,
+    etf_details: Dict[str, Any],
+) -> Dict[str, Any]:
     """
-    Asynchronously fetches and processes data for a single ETF.
-    It acquires a semaphore to limit concurrency.
+    Fetch and parse a single SPDR ETF:
+      - read main page for ISIN / TER / AUM / currency / domicile / replication
+      - fetch the XLSX of holdings and parse it into a normalized list (dicts)
     """
     async with semaphore:
         try:
-            # 1. Get ETF's main page to find ISIN, TER and holdings link
             etf_url = "https://www.ssga.com" + etf_details["url"]
             async with session.get(etf_url) as response:
                 response.raise_for_status()
                 soup = BeautifulSoup(await response.text(), "html.parser")
 
+            # ISIN
             isin_label = soup.find("td", string=re.compile(r"\s*ISIN\s*"))
             if isin_label:
                 etf_details["isin"] = isin_label.find_next_sibling("td").get_text(
                     strip=True
                 )
             else:
-                # Handle cases where ISIN is not found
                 print(f"Warning: ISIN not found for {etf_details.get('url')}")
                 return etf_details  # Exit early if no ISIN
 
-            # 3. Extract TER from the page ## FIXED
+            # TER
             ter_label = soup.find("td", string=re.compile(r"\s*TER\s*"))
             if ter_label and (ter_value_tag := ter_label.find_next_sibling("td")):
                 ter_text = ter_value_tag.get_text(strip=True)
@@ -81,6 +87,7 @@ async def fetch_and_process_etf(session, semaphore, etf_details):
                         ter_text.replace("%", "").replace(",", ".")
                     )
 
+            # AUM (size)
             aum_label = soup.find(
                 "div", string=re.compile(r"\s*Asset Totali del  Fondo EUR\s*")
             )
@@ -89,6 +96,7 @@ async def fetch_and_process_etf(session, semaphore, etf_details):
                 if aum_text:
                     etf_details["size"] = float(parse_amount(aum_text))
 
+            # Currency
             curr_label = soup.find(
                 "div", string=re.compile(r"\s*Valuta della classe di azioni\s*")
             )
@@ -97,14 +105,16 @@ async def fetch_and_process_etf(session, semaphore, etf_details):
                 if curr_text:
                     etf_details["currency"] = curr_text
 
+            # Domicile
             domicile_label = soup.find("td", string=re.compile(r"\s*Domicilio\s*"))
             if domicile_label and (
                 domicile_value_tag := domicile_label.find_next_sibling("td")
             ):
                 domicile_text = domicile_value_tag.get_text(strip=True)
                 if domicile_text:
-                    etf_details["domicile"] = country_to_iso3(domicile_text)
+                    etf_details["domicile"] = domicile_text  # normalized later by ETF
 
+            # Replication
             replication_label = soup.find(
                 "td", string=re.compile(r"\s*Metodologia di Replica\s*")
             )
@@ -113,9 +123,11 @@ async def fetch_and_process_etf(session, semaphore, etf_details):
             ):
                 replication_text = replication_value_tag.get_text(strip=True)
                 if replication_text:
-                    etf_details["replication"] = translate(replication_text)
+                    etf_details["replication"] = (
+                        replication_text  # normalized later by ETF
+                    )
 
-            # 4. Find and download holdings XLSX file
+            # Holdings XLSX
             link_tag = soup.find("a", string="Scarica le posizioni giornaliere")
             if link_tag and (link := link_tag.get("href")):
                 holdings_url = "https://www.ssga.com" + link
@@ -123,8 +135,8 @@ async def fetch_and_process_etf(session, semaphore, etf_details):
                     holdings_response.raise_for_status()
                     excel_content = await holdings_response.read()
 
-                # 5. Process holdings data with Polars
-                holdings = pl.read_excel(
+                # Parse 'holdings' sheet; SPDR files tend to have headers starting on row 6 (0-based 5)
+                df = pl.read_excel(
                     io.BytesIO(excel_content),
                     engine="calamine",
                     sheet_name="holdings",
@@ -137,17 +149,18 @@ async def fetch_and_process_etf(session, semaphore, etf_details):
                     }
                 )
 
-                if "Currency Local" in holdings.columns:
-                    holdings = holdings.rename({"Currency Local": "currency"})
+                # Column variations
+                if "Currency Local" in df.columns:
+                    df = df.rename({"Currency Local": "currency"})
                 else:
-                    holdings = holdings.rename(
+                    df = df.rename(
                         {"Currency": "currency", "Trade Country Name": "country"}
                     )
 
-                # Handle different column names for bond vs equity funds
-                if "Maturity Date" in holdings.columns:
-                    holdings = (
-                        holdings.rename({"Country of Issue": "country"})
+                # Bond vs equity layout differences
+                if "Maturity Date" in df.columns:
+                    df = (
+                        df.rename({"Country of Issue": "country"})
                         .drop(
                             "Maturity Date",
                             "Interest Rate",
@@ -159,35 +172,25 @@ async def fetch_and_process_etf(session, semaphore, etf_details):
                         .with_columns(pl.lit("bond").alias("sector"))
                     )
                 else:
-                    holdings = holdings.rename({"Sector Classification": "sector"})
+                    df = df.rename({"Sector Classification": "sector"})
 
-                # 6. Clean and format holdings data
-                final_holdings = []
-                for holding in holdings.to_dicts():
-                    # Skip rows with invalid or placeholder ISINs
-                    if (
-                        not holding.get("isin")
-                        or holding["isin"] == "-"
-                        or len(holding.get("isin", "")) > 12
-                    ):
+                # Build list of clean dicts (minimal pre-normalization)
+                final_holdings: List[Dict[str, Any]] = []
+                for row in df.to_dicts():
+                    isin = row.get("isin")
+                    if not isin or isin == "-" or len(str(isin)) > 12:
                         continue
 
-                    if (
-                        "weight" in holding
-                        and holding["weight"] != "-"
-                        and holding["weight"] is not None
-                    ):
-                        holding["weight"] = float(holding["weight"])
+                    weight = row.get("weight")
+                    if weight not in (None, "-"):
+                        try:
+                            row["weight"] = float(weight)
+                        except Exception:
+                            row["weight"] = None
                     else:
-                        holding["weight"] = 0.0
+                        row["weight"] = None
 
-                    if "country" in holding and holding["country"]:
-                        holding["country"] = country_to_iso3(holding["country"])
-
-                    if "sector" in holding and holding["sector"]:
-                        holding["sector"] = translate(holding["sector"])
-
-                    final_holdings.append(holding)
+                    final_holdings.append(row)
 
                 etf_details["holdings"] = final_holdings
 
@@ -195,16 +198,18 @@ async def fetch_and_process_etf(session, semaphore, etf_details):
 
         except (aiohttp.ClientError, Exception) as e:
             print(f"Error processing {etf_details.get('ticker')}: {e}")
-            # Return original details without holdings on error
             return etf_details
 
 
-# --- Main Asynchronous Execution Logic ---
 async def main():
     """
-    Main function to orchestrate the fetching, processing, and saving of all ETFs.
+    Orchestrates:
+      1) Fetch list of SPDR ETFs (IT locale)
+      2) Concurrently scrape each ETF page + holdings file
+      3) Normalize into ETF/Holding models
+      4) Upsert into normalized DB (etfs, securities, etf_holdings)
     """
-    # Initial synchronous request to get the list of ETFs
+    # 1) Initial list
     response = requests.get(
         "https://www.ssga.com/bin/v1/ssmp/fund/fundfinder",
         params={
@@ -215,12 +220,13 @@ async def main():
             "ui": "fund-finder",
         },
         headers={"accept": "application/json"},
+        timeout=30,
     )
     response.raise_for_status()
     etf_list = response.json()["data"]["funds"]["etfs"]["datas"]
 
-    # Initial cleaning of the ETF list
-    cleaned = []
+    # Clean minimal fields needed before per-ETF fetch
+    cleaned: List[Dict[str, Any]] = []
     for etf in etf_list:
         ter = None
         if "perfIndex" in etf and etf["perfIndex"][0]["ter"] != "-":
@@ -239,86 +245,117 @@ async def main():
             }
         )
 
-    # --- Asynchronous Processing ---
+    # 2) Concurrent scraping
     semaphore = asyncio.Semaphore(CONCURRENT_REQUESTS)
     async with aiohttp.ClientSession() as session:
         tasks = [fetch_and_process_etf(session, semaphore, etf) for etf in cleaned]
         results = await tqdm_asyncio.gather(*tasks, desc="Processing ETFs")
 
-    # --- Prepare Data for Database Insertion ---
-    etfs_to_insert = []
-    all_holdings_to_insert = []
+    # 3) Normalize via shared models
+    etf_tuples: List[tuple] = []
+    holdings_tuples: List[tuple] = []
+    isins_to_update: List[str] = []
 
     for etf_data in results:
-        # Skip ETFs where we failed to get an ISIN
-        if "isin" not in etf_data:
+        isin = etf_data.get("isin")
+        if not isin:
             print(f"Skipping {etf_data.get('name')} due to missing ISIN.")
             continue
 
-        etf_record = etf_data.copy()
-        holdings = etf_record.pop("holdings", [])
+        etf_obj = ETF(
+            isin=isin,
+            issuer=etf_data["issuer"],
+            name=etf_data.get("name"),
+            ticker=etf_data.get("ticker"),
+            ter=etf_data.get("ter"),
+            nav=None,
+            size=etf_data.get("size"),
+            currency=etf_data.get("currency"),
+            asset_class=None,
+            sub_asset_class=None,
+            region=None,
+            use_of_profits=etf_data.get("use_of_profits"),
+            replication=etf_data.get("replication"),
+            domicile=etf_data.get("domicile"),
+            inception_date=etf_data.get("inception_date"),
+            url=etf_data.get("url") or "",
+        )
+        etf_tuples.append(etf_obj.to_db_tuple())
+        isins_to_update.append(isin)
 
-        # Ensure url is not None for database insertion
-        etf_record["url"] = etf_record.get("url", "")
-
-        etfs_to_insert.append(etf_record)
-
-        for h in holdings:
-            all_holdings_to_insert.append(
-                (
-                    etf_data["isin"],  # etf_isin
-                    h.get("isin"),  # holding_isin
-                    h.get("holding_name"),  # holding_name
-                    h.get("weight"),  # weight
-                    h.get("sector"),  # sector
-                    h.get("country"),  # country
-                    h.get("currency"),  # currency
-                )
+        for h in etf_data.get("holdings", []):
+            h_obj = Holding(
+                etf_isin=isin,
+                holding_isin=h.get("isin"),
+                holding_name=h.get("holding_name"),
+                weight=h.get("weight"),
+                sector=h.get("sector"),
+                country=h.get("country"),
+                currency=h.get("currency"),
             )
+            holdings_tuples.append(h_obj.to_db_tuple())
 
-    # --- Batch insert all collected data into the database ---
-    if not etfs_to_insert:
+    if not etf_tuples:
         print("\nNo ETF data to insert. Exiting.")
         return
 
-    print("\nConnecting to database and inserting data...")
-    conn = sqlite3.connect(DB_NAME)
-    setup_database(conn)
-    cursor = conn.cursor()
+    # 4) Persist into normalized DB
+    print("\nWriting to database...")
+    with open_db(DB_NAME) as conn:
+        # Recreate schema (destructive, consistent with other scrapers)
+        setup_database(conn)
 
-    try:
-        # Batch insert ETFs
-        etf_cols = list(etfs_to_insert[0].keys())
-        etf_placeholders = ", ".join("?" for _ in etf_cols)
-        etf_values = [tuple(p.get(col) for col in etf_cols) for p in etfs_to_insert]
+        # Upsert ETFs
+        print("Upserting ETFs...")
+        for tup in etf_tuples:
+            upsert_etf(conn, tup)
 
-        cursor.executemany(
-            f"INSERT OR REPLACE INTO etfs ({', '.join(etf_cols)}) VALUES ({etf_placeholders})",
-            etf_values,
-        )
-        print(f"Inserted or replaced {cursor.rowcount} ETFs.")
-
-        # Batch insert holdings
-        if all_holdings_to_insert:
-            # First, clear existing holdings for the ETFs we are updating
-            updated_etf_isins = {f"'{p['isin']}'" for p in etfs_to_insert}
-            cursor.execute(
-                f"DELETE FROM etf_holdings WHERE etf_isin IN ({','.join(updated_etf_isins)})"
+        # Clear previous holdings for these ETFs to avoid stale rows
+        if isins_to_update:
+            print("Clearing old holdings...")
+            placeholders = ", ".join("?" for _ in isins_to_update)
+            conn.execute(
+                f"DELETE FROM etf_holdings WHERE etf_isin IN ({placeholders})",
+                isins_to_update,
             )
 
-            cursor.executemany(
-                "INSERT INTO etf_holdings (etf_isin, holding_isin, holding_name, weight, sector, country, currency) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                all_holdings_to_insert,
-            )
-            print(f"Inserted {cursor.rowcount} holdings.")
+        print("Upserting securities and holdings...")
+        for (
+            etf_isin,
+            holding_isin,
+            holding_name,
+            weight,
+            sector,
+            country,
+            currency,
+        ) in holdings_tuples:
+            # Skip obviously bad ISINs; ensure a usable name
+            if holding_isin and len(holding_isin) != 12:
+                continue
 
-        conn.commit()
-        print("\nProcessing complete. Data saved to database.")
-    except sqlite3.Error as e:
-        print(f"\nDatabase error: {e}")
-        conn.rollback()
-    finally:
-        conn.close()
+            if weight is None or weight < 0:
+                weight = 0.0
+
+            name = (
+                holding_name
+                or (sector == "cash" and "CASH")
+                or holding_isin
+                or "UNKNOWN"
+            )
+
+            sec_id = upsert_security(
+                conn,
+                isin=holding_isin,
+                name=str(name),
+                sector=sector,
+                country=country,
+                currency=currency,
+            )
+            upsert_holding(conn, etf_isin=etf_isin, security_id=sec_id, weight=weight)
+
+        print("Rebuilding search index...")
+
+    print("✅ SPDR scraping complete. Database is up to date.")
 
 
 if __name__ == "__main__":

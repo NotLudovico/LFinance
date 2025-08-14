@@ -32,11 +32,8 @@ def _(mo):
 @app.cell
 def _():
     portfolio = {
-        "IE00B52MJY50": 5072,
-        "IE00BMG6Z448": 15278,
-        "IE00B4L5Y983": 25430,
-        "LU0908500753": 29484,
-        "IE00BFY0GT14": 1000
+        "IE00BKM4GZ66": 1000,
+        "IE00B4L5Y983": 9000
     }
     return (portfolio,)
 
@@ -52,7 +49,7 @@ def _(mo, portfolio):
     return (portfolio_pct,)
 
 
-@app.cell(hide_code=True)
+@app.cell
 def _(sqlite3):
     # Attaching DB
     conn = sqlite3.connect("data/database.db")
@@ -73,7 +70,7 @@ def _(conn, pl, portfolio_pct):
             pl.read_database(
                 query=f"""
                     SELECT *
-                    FROM etf_holdings
+                    FROM v_holdings
                     WHERE etf_isin="{k}";
                    """,
                 connection=conn,
@@ -81,7 +78,6 @@ def _(conn, pl, portfolio_pct):
             .with_columns(
                 pl.col("weight") * v,
             )
-            .drop(pl.col("id"))
             .filter(pl.col("weight") > 0)
         )
         dfs.append(df)

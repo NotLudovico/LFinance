@@ -22,6 +22,9 @@ ETF_PROPERTY_TRANSLATE = {
     "Energia": "energy",
     "Immobili": "real estate",
     "Attività bancarie": "banking",
+    # Why not just looking at distribution_method in amundi?
+    # because it's often stated Capitalisation and/or distribution which is not
+    # informative
     "Distribution": "dist",
     "UCITS ETF EUR Dist": "dist",
     "Accumulation": "acc",
@@ -33,9 +36,29 @@ ETF_PROPERTY_TRANSLATE = {
     "UCITS ETF Acc EUR Hedged": "acc",
     "UCITS ETF Dist": "dist",
     "UCITS ETF DR - USD (D)": "dist",
+    "UCITS ETF EUR Hedged Acc": "acc",
+    "UCITS ETF EUR HEDGED Dist": "dist",
     "EUR Hedged Dist": "dist",
+    "Monthly Hedged to EUR - Acc": "acc",
+    "UCITS ETF USD Hedged Acc": "acc",
+    "UCITS ETF - Acc": "acc",
     "UCITS ETF EUR Hedged Dist": "dist",
     "UCITS ETF USD Hedged Dist": "dist",
+    "UCITS ETF DR (D)": "dist",
+    "UCITS ETF DR – EUR (D)": "dist",
+    "UCITS ETF DR – EUR (C)": "acc",
+    "UCITS ETF DR - USD (C)": "acc",
+    "UCITS ETF DR - EUR HEDGED (C)": "acc",
+    "UCITS ETF DR - HEDGED EUR (C)": "acc",
+    "UCITS ETF DR - EUR (C)": "acc",
+    "UCITS ETF 2 DR - EUR (C)": "acc",
+    "UCITS ETF - Daily Hedged EUR": None,
+    "UCITS ETF - EUR": None,
+    "UCITS ETF DR": None,
+    "EUR": None,
+    "UCITS ETF - DAILY HEDGED EUR (C)": "acc",
+    "UCITS ETF - EUR (D)": "dist",
+    "UCITS ETF - EUR (C)": "acc",
     "Direct(Physical)": "physical",
     "Indirect(Swap Based)": "swap",
     "Campionatura stratificata": "stratified sampling",
@@ -46,6 +69,6 @@ def translate(value):
     if value and value in ETF_PROPERTY_TRANSLATE:
         return ETF_PROPERTY_TRANSLATE[value]
     if value:
-        return value.lower()
+        return value.lower().strip()
     else:
         return None
