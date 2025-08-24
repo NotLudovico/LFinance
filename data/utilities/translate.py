@@ -26,6 +26,8 @@ ETF_PROPERTY_TRANSLATE = {
     # because it's often stated Capitalisation and/or distribution which is not
     # informative
     "Distribution": "dist",
+    "Capitalizzazione": "acc",
+    "Distribuzione": "dist",
     "UCITS ETF EUR Dist": "dist",
     "Accumulation": "acc",
     "EUR Acc": "acc",
