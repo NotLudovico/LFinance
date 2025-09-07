@@ -764,6 +764,7 @@ def get_etf_list():
     funds = json.loads(response.text)["data"]["funds"]
     pid_isin = {}
     for fund in funds:
+        print(fund["portId"])
         try:
             pid_isin[fund["portId"]] = [
                 x for x in fund["profile"]["identifiers"] if x["altId"] == "ISIN"
@@ -774,14 +775,14 @@ def get_etf_list():
     return pid_isin
 
 
-def get_holdings_data(pid, isin):
+def get_holdings_data(pid, isin, last_item_key=None):
     url = "https://www.it.vanguard/gpx/graphql"
 
     payload = {
         "operationName": "FundsHoldingsQuery",
         "variables": {
             "portIds": [pid],
-            "lastItemKey": None,
+            "lastItemKey": last_item_key,
             "securityTypes": [
                 "FI.ABS",
                 "FI.CONV",
@@ -820,6 +821,11 @@ def get_holdings_data(pid, isin):
     response = requests.request("POST", url, json=payload, headers=headers)
 
     holdings = json.loads(response.text)["data"]["borHoldings"][0]["holdings"]["items"]
+
+    last_key = json.loads(response.text)["data"]["borHoldings"][0]["holdings"][
+        "lastItemKey"
+    ]
+
     cleaned = []
     for holding in holdings:
         cleaned.append(
@@ -833,6 +839,9 @@ def get_holdings_data(pid, isin):
                 currency=None,
             )
         )
+
+    if last_key is not None:
+        cleaned.extend(get_holdings_data(pid, isin, last_item_key=last_key))
 
     return cleaned
 
